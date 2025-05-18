@@ -6,6 +6,10 @@
 #include <ArduinoJson.h>
 #include "secrets.h"
 
+#define uS_TO_S_FACTOR 1000000ULL // Conversion factor from microseconds to seconds
+#define TIME_TO_SLEEP  600         // Time for ESP32-E to enter deep sleep
+RTC_DATA_ATTR int bootCount = 0;    
+
 #define TEMT6000 A0
 
 #define BATTERY_LEVEL_PIN A3
@@ -31,6 +35,20 @@ Ticker mqttReconnectTimer;
 
 const char* topic_skyping = "esp/skyping";
 
+void print_wakeup_reason(){          
+  esp_sleep_wakeup_cause_t wakeup_reason;  
+  wakeup_reason = esp_sleep_get_wakeup_cause(); 
+
+  switch(wakeup_reason) {             // Check the wake-up reason and print the corresponding message
+    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+  }
+}
+
 void initWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -46,13 +64,54 @@ void initWiFi() {
 void connectToMqtt() {
   Serial.println("Connecting to MQTT...");
   mqttClient.connect();
+
 }
 
 void onMqttConnect(bool sessionPresent) {
   Serial.println("Connected to MQTT.");
-
   Serial.print("Session present: ");
   Serial.println(sessionPresent);
+  Serial.println("===== COLLECTING DATA ===== ");
+  Serial.println(" lux");
+  temp = dht.readTemperature();
+  hum = dht.readHumidity();
+
+  Serial.printf("new temperature reading: %.2f\n", temp);
+  Serial.printf("new humidity reading: %.2f\n", hum);
+  Serial.println(battery_level);
+
+  float volts = analogRead(TEMT6000) * 3.3 / 1024.0;        // Convert reading to VOLTS
+  float VoltPercent = analogRead(TEMT6000) / 1024.0 * 100;  //Reading to Percent of Voltage
+
+  //Conversions from reading to LUX
+  float amps = volts / 10000.0;      // em 10,000 Ohms
+  float microamps = amps * 1000000;  // Convert to Microamps
+  float lux = microamps * 2.0;       // Convert to Lux */
+  Serial.println(" ----------------");
+  Serial.print("LUX - ");
+  Serial.print(lux);
+  Serial.println(" lx");
+  Serial.print(VoltPercent);
+  Serial.println("%");
+  Serial.print(volts);
+  Serial.println(" volts");
+  Serial.println(" ----------------");
+
+  DynamicJsonDocument doc(1024);
+  doc["sensor_id"] = 1;
+  doc["project_id"] = 1;
+  doc["project_name"] = "sky-ping";
+  doc["temperature"] = temp;
+  doc["humidity"] = hum;
+  doc["lux"] = round(lux);
+  doc["lux_volt_percent"] = VoltPercent;
+
+
+  String jsonString;
+  serializeJson(doc, jsonString);
+
+  Serial.println("===== SENDING DATA ===== ");
+  uint16_t packetIdPub1 = mqttClient.publish(topic_skyping, 1, true, jsonString.c_str());
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -67,11 +126,20 @@ void onMqttPublish(uint16_t packetId) {
   Serial.print("Publish acknowledged.");
   Serial.print("  packetId: ");
   Serial.println(packetId);
+
+  Serial.println("===== POWER OFF SENSORS ===== ");
+  digitalWrite(ACTIVATE_SENSOR_PIN, LOW);
+  Serial.println("===== GOING BACK TO SLEEP ===== ");
+  esp_deep_sleep_start();   
 }
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
+    ++bootCount;
+    Serial.println("Boot number: " + String(bootCount));   
+    print_wakeup_reason();  
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);   
     dht.begin();
 
     pinMode(ACTIVATE_SENSOR_PIN, OUTPUT);
@@ -85,59 +153,13 @@ void setup() {
     digitalWrite(ACTIVATE_SENSOR_PIN, HIGH);
     
     initWiFi();
+
+
+
+    Serial.flush();
+
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
-  
-  if (currentMillis - previousMillis >= interval) {
-    Serial.println(" lux");
-    previousMillis = currentMillis;
-    temp = dht.readTemperature();
-    hum = dht.readHumidity();
-
-    Serial.printf("new temperature reading: %.2f\n", temp);
-    Serial.printf("new humidity reading: %.2f\n", hum);
-    float battery_level =  analogRead(BATTERY_LEVEL_PIN);
-    float battery_voltage = (battery_level / 4095.0) * 3.3; // convert to volts
-    Serial.println(battery_level);
-
-    float volts =  analogRead(TEMT6000) * 3.3 / 1024.0; // Convert reading to VOLTS
-    float VoltPercent = analogRead(TEMT6000) / 1024.0 * 100; //Reading to Percent of Voltage
-
-  //   //Conversions from reading to LUX
-    float amps = volts / 10000.0;  // em 10,000 Ohms
-    float microamps = amps * 1000000; // Convert to Microamps
-    float lux = microamps * 2.0; // Convert to Lux */
-    Serial.print("LUX - ");
-    Serial.print(lux);
-    Serial.println(" lx");
-    Serial.print(VoltPercent);
-    Serial.println("%");
-    Serial.print(volts);
-    Serial.println(" volts");
-    Serial.print(amps);
-    Serial.println(" amps");
-    Serial.print(microamps);
-    Serial.println(" microamps");
-    Serial.println(" ----------------");
-
-    DynamicJsonDocument doc(1024);
-    doc["sensor_id"] = 1;
-    doc["project_id"] = 1;
-    doc["project_name"] = "sky-ping";
-    doc["battery_level"] = battery_voltage;
-    doc["temperature"] = temp;
-    doc["humidity"] = hum;
-    doc["lux"] = round(lux);
-    doc["lux_volt_percent"] = VoltPercent;
-
-
-    String jsonString;
-    serializeJson(doc, jsonString);
-
-
-    uint16_t packetIdPub1 = mqttClient.publish(topic_skyping, 1, true, jsonString.c_str());
-  }
 
 }
