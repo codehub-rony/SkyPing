@@ -78,7 +78,6 @@ void onMqttConnect(bool sessionPresent) {
 
   Serial.printf("new temperature reading: %.2f\n", temp);
   Serial.printf("new humidity reading: %.2f\n", hum);
-  Serial.println(battery_level);
 
   float volts = analogRead(TEMT6000) * 3.3 / 1024.0;        // Convert reading to VOLTS
   float VoltPercent = analogRead(TEMT6000) / 1024.0 * 100;  //Reading to Percent of Voltage
