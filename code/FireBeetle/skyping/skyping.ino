@@ -7,7 +7,7 @@
 #include "secrets.h"
 
 #define uS_TO_S_FACTOR 1000000ULL // Conversion factor from microseconds to seconds
-#define TIME_TO_SLEEP  600         // Time for ESP32-E to enter deep sleep
+#define TIME_TO_SLEEP  900         // Time (in seconds) for ESP32-E to enter deep sleep
 RTC_DATA_ATTR int bootCount = 0;    
 
 #define TEMT6000 A0
@@ -72,7 +72,7 @@ void onMqttConnect(bool sessionPresent) {
   Serial.print("Session present: ");
   Serial.println(sessionPresent);
   Serial.println("===== COLLECTING DATA ===== ");
-  Serial.println(" lux");
+
   temp = dht.readTemperature();
   hum = dht.readHumidity();
 
@@ -86,15 +86,13 @@ void onMqttConnect(bool sessionPresent) {
   float amps = volts / 10000.0;      // em 10,000 Ohms
   float microamps = amps * 1000000;  // Convert to Microamps
   float lux = microamps * 2.0;       // Convert to Lux */
-  Serial.println(" ----------------");
+  Serial.println("----------------");
   Serial.print("LUX - ");
   Serial.print(lux);
   Serial.println(" lx");
-  Serial.print(VoltPercent);
-  Serial.println("%");
   Serial.print(volts);
   Serial.println(" volts");
-  Serial.println(" ----------------");
+  Serial.println("----------------");
 
   DynamicJsonDocument doc(1024);
   doc["sensor_id"] = 1;
