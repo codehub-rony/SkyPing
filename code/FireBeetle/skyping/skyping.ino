@@ -2,12 +2,12 @@
 #include <WiFi.h>
 #include <Ticker.h>
 #include <AsyncMqtt_Generic.h>
-#include <DHT.h>
 #include <ArduinoJson.h>
 #include "secrets.h"
+#include "CHT8305.h"
 
 #define uS_TO_S_FACTOR 1000000ULL // Conversion factor from microseconds to seconds
-#define TIME_TO_SLEEP  900         // Time (in seconds) for ESP32-E to enter deep sleep
+#define TIME_TO_SLEEP  600         // Time (in seconds) for ESP32-E to enter deep sleep
 RTC_DATA_ATTR int bootCount = 0;    
 
 #define TEMT6000 A0
@@ -15,20 +15,17 @@ RTC_DATA_ATTR int bootCount = 0;
 #define BATTERY_LEVEL_PIN A3
 #define ACTIVATE_SENSOR_PIN D13
 
-#define MQTT_HOST IPAddress(192, 168, 2, 46)
-#define MQTT_PORT 1883
-
-//DHT22
-#define DHTPIN D10
-#define DHTTYPE    DHT22
-DHT dht(DHTPIN, DHTTYPE);
+// CHT8305 temperature and humidity sensor
+CHT8305 CHT(0x40);  
 
 float temp = 0.0;
 float hum = 0.0;
 
+#define MQTT_HOST IPAddress(192, 168, 2, 46)
+#define MQTT_PORT 1883
+
 unsigned long previousMillis = 0;  // Stores last time sensor reading was published
 const long interval = 10000;       // Interval at which to publish sensor readings
-
 
 AsyncMqttClient mqttClient;
 Ticker mqttReconnectTimer;
@@ -64,7 +61,6 @@ void initWiFi() {
 void connectToMqtt() {
   Serial.println("Connecting to MQTT...");
   mqttClient.connect();
-
 }
 
 void onMqttConnect(bool sessionPresent) {
@@ -73,14 +69,12 @@ void onMqttConnect(bool sessionPresent) {
   Serial.println(sessionPresent);
   Serial.println("===== COLLECTING DATA ===== ");
 
-  temp = dht.readTemperature();
-  hum = dht.readHumidity();
+  CHT.read();
 
-  Serial.printf("new temperature reading: %.2f\n", temp);
-  Serial.printf("new humidity reading: %.2f\n", hum);
+  temp = CHT.getTemperature();
+  hum = CHT.getHumidity();
 
   float volts = analogRead(TEMT6000) * 3.3 / 1024.0;        // Convert reading to VOLTS
-  float VoltPercent = analogRead(TEMT6000) / 1024.0 * 100;  //Reading to Percent of Voltage
 
   //Conversions from reading to LUX
   float amps = volts / 10000.0;      // em 10,000 Ohms
@@ -98,10 +92,9 @@ void onMqttConnect(bool sessionPresent) {
   doc["sensor_id"] = 1;
   doc["project_id"] = 1;
   doc["project_name"] = "sky-ping";
-  doc["temperature"] = temp;
-  doc["humidity"] = hum;
+  doc["temperature"] = round(temp * 10.0) / 10.0;
+  doc["humidity"] = round(hum * 10.0) / 10.0;
   doc["lux"] = round(lux);
-  doc["lux_volt_percent"] = VoltPercent;
 
 
   String jsonString;
@@ -137,7 +130,12 @@ void setup() {
     Serial.println("Boot number: " + String(bootCount));   
     print_wakeup_reason();  
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);   
-    dht.begin();
+
+    Wire.begin();
+    Wire.setClock(100000);
+    delay(500);
+    CHT.begin();
+    delay(500);
 
     pinMode(ACTIVATE_SENSOR_PIN, OUTPUT);
 
